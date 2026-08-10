@@ -1,9 +1,18 @@
-from fastapi import FastAPI, Depends
+from fastapi import FastAPI, Depends, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
-from models import Product
+from models import (
+    ProductCreate,
+    ProductUpdate,
+    ProductResponse,
+    UserCreate,
+    UserLogin,
+    UserResponse
+)
+from auth import hash_password, verify_password
+from jwt_auth import create_access_token
 from database import session, engine
 import database_models
 
@@ -24,14 +33,95 @@ async def greet():
     return "Hello, welcome to the program!"
 
 products=[
-    Product(id=1, name="phone", description="A smartphone with 128GB storage", price=699.99, quantity=50),
-    Product(id=2, name="laptop", description="A laptop with 16GB RAM and 512GB SSD", price=1299.99, quantity=30),
-    Product(id=3, name="headphones", description="Wireless headphones with noise cancellation", price=199.99, quantity=100),
-    Product(id=4, name="smartwatch", description="A smartwatch with heart rate monitoring", price=249.99, quantity=75)
+    ProductCreate(name="phone", description="A smartphone with 128GB storage", price=699.99, quantity=50),
+    ProductCreate(name="laptop", description="A laptop with 16GB RAM and 512GB SSD", price=1299.99, quantity=30),
+    ProductCreate(name="headphones", description="Wireless headphones with noise cancellation", price=199.99, quantity=100),
+    ProductCreate(name="smartwatch", description="A smartwatch with heart rate monitoring", price=249.99, quantity=75)
 ]
 async def get_db():
     async with session() as db:
         yield db
+
+@app.post("/register", response_model=UserResponse)
+async def register_user(
+    user: UserCreate,
+    db: AsyncSession = Depends(get_db)
+):
+    result = await db.execute(
+        select(database_models.User).where(
+            (database_models.User.username == user.username)
+            | (database_models.User.email == user.email)
+        )
+    )
+
+    existing_user = result.scalar_one_or_none()
+
+    if existing_user:
+        if existing_user.username == user.username:
+            raise HTTPException(
+                status_code=400,
+                detail="Username already exists"
+            )
+
+        raise HTTPException(
+            status_code=400,
+            detail="Email already exists"
+        )
+
+    password_hash = hash_password(user.password)
+
+    db_user = database_models.User(
+        username=user.username,
+        email=user.email,
+        password_hash=password_hash
+    )
+
+    db.add(db_user)
+
+    await db.commit()
+
+    await db.refresh(db_user)
+
+    return db_user
+
+@app.post("/login")
+async def login_user(
+    user: UserLogin,
+    db: AsyncSession = Depends(get_db)
+):
+    result = await db.execute(   #Find the user
+        select(database_models.User).where(
+            database_models.User.username == user.username
+        )
+    )
+
+    db_user = result.scalar_one_or_none()
+
+    if db_user is None: #If user doesn't exist
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid username or password"
+        )
+
+    if not verify_password(
+        user.password,
+        db_user.password_hash
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid username or password"
+        )
+    #Create JWT if password is correct
+    access_token = create_access_token(
+        data={
+            "sub": str(db_user.id)
+        }
+    )
+
+    return {
+        "access_token": access_token,
+        "token_type": "bearer"
+    }
 
 async def init_db():
 
@@ -64,7 +154,7 @@ async def startup():
 
     await init_db()
 
-@app.get("/products")
+@app.get("/products", response_model=list[ProductResponse])
 async def get_all_products(
     db: AsyncSession = Depends(get_db)
 ):
@@ -77,7 +167,7 @@ async def get_all_products(
 
     return db_products
 
-@app.get("/products/{product_id}")
+@app.get("/products/{product_id}", response_model=ProductResponse)
 async def get_product_by_id(
     product_id: int,
     db: AsyncSession = Depends(get_db)
@@ -91,14 +181,17 @@ async def get_product_by_id(
 
     db_product = result.scalar_one_or_none()
 
-    if db_product:
-        return db_product
+    if db_product is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Product not found"
+        )
 
-    return None
+    return db_product
 
-@app.post("/products")
+@app.post("/products", status_code=status.HTTP_201_CREATED, response_model=ProductResponse)
 async def add_product(
-    product: Product,
+    product: ProductCreate,
     db: AsyncSession = Depends(get_db)
 ):
 
@@ -114,10 +207,10 @@ async def add_product(
 
     return db_product
 
-@app.put("/products/{id}")
+@app.put("/products/{id}", response_model=ProductResponse)
 async def update_product(
     id: int,
-    updated_product: Product,
+    updated_product: ProductUpdate,
     db: AsyncSession = Depends(get_db)
 ):
 
@@ -130,7 +223,9 @@ async def update_product(
     db_product = result.scalar_one_or_none()
 
     if db_product is None:
-        return "Product not found"
+        raise HTTPException(
+            status_code=404,
+            detail="Product not found")
 
     db_product.name = updated_product.name
     db_product.description = updated_product.description
@@ -158,11 +253,39 @@ async def delete_product(
     db_product = result.scalar_one_or_none()
 
     if db_product is None:
-        return "Product not found"
+        raise HTTPException(
+            status_code=404,
+            detail="Product not found"
+        )
 
     await db.delete(db_product)
 
     await db.commit()
 
-    return "Product deleted successfully"
+    return {"message": "Product deleted successfully"}
+
+@app.patch("/products/{id}", response_model=ProductResponse)
+async def patch_product(id: int, updated_product: ProductUpdate, db: AsyncSession = Depends(get_db)):
+
+    result = await db.execute(
+        select(database_models.Product).where(
+            database_models.Product.id == id
+        )
+    )
+
+    db_product = result.scalar_one_or_none()
+
+    if db_product is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Product not found"
+        )
+
+    update_data = updated_product.model_dump(exclude_unset=True)
+    for field, value in update_data.items():
+        setattr(db_product, field, value)
+    await db.commit()
+    await db.refresh(db_product)
+
+    return db_product
           
