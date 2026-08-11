@@ -10,6 +10,8 @@ load_dotenv()
 
 
 SECRET_KEY = os.getenv("SECRET_KEY")
+if not SECRET_KEY:
+    raise RuntimeError("SECRET_KEY is not configured")
 
 ALGORITHM = "HS256"
 
@@ -34,9 +36,23 @@ def create_access_token(data: dict):
 
     return encoded_jwt
 
+def verify_access_token(token: str):
+    try:
+        payload = jwt.decode(
+            token,
+            SECRET_KEY,
+            algorithms=[ALGORITHM]
+        )
+
+        return payload
+
+    except Exception:
+        return None
+
 if __name__ == "__main__":
     token = create_access_token({
         "sub": "1"
     })
 
     print(token)
+    print(verify_access_token(token))

@@ -1,17 +1,30 @@
+import os
+
+from dotenv import load_dotenv
+
 from sqlalchemy.ext.asyncio import (
     create_async_engine,
     AsyncSession,
     async_sessionmaker,
 )
 
-DATABASE_URL = "postgresql+asyncpg://postgres:Radha%4013@localhost:5432/animesh"
 
-engine = create_async_engine( # Create an async engine
+load_dotenv()
+
+
+DATABASE_URL = os.getenv("DATABASE_URL")
+
+if not DATABASE_URL:
+    raise RuntimeError("DATABASE_URL is not configured")
+
+
+engine = create_async_engine(
     DATABASE_URL,
     echo=True
 )
 
-session = async_sessionmaker( # Create an async session factory
+
+session = async_sessionmaker(
     bind=engine,
     expire_on_commit=False,
     autoflush=False,

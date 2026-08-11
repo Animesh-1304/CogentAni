@@ -1,8 +1,10 @@
-from fastapi import FastAPI, Depends, HTTPException, status
+from fastapi import FastAPI, Depends, HTTPException, status, Query
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-
+from logging_config import logger
+from bearer_auth import BearerAuthMiddleware
+from fastapi.security import HTTPBearer
 from models import (
     ProductCreate,
     ProductUpdate,
@@ -17,11 +19,14 @@ from database import session, engine
 import database_models
 
 app=FastAPI()
+security = HTTPBearer()
+
+app.add_middleware(BearerAuthMiddleware)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=[],
+    allow_credentials=False,
     allow_headers=["*"],
     allow_methods=["*"],
 )
@@ -47,6 +52,11 @@ async def register_user(
     user: UserCreate,
     db: AsyncSession = Depends(get_db)
 ):
+    logger.info(
+        "Registration attempt for username: %s",
+        user.username
+    )
+
     result = await db.execute(
         select(database_models.User).where(
             (database_models.User.username == user.username)
@@ -58,10 +68,20 @@ async def register_user(
 
     if existing_user:
         if existing_user.username == user.username:
+            logger.warning(
+                "Registration failed: username already exists: %s",
+                user.username
+            )
+
             raise HTTPException(
                 status_code=400,
                 detail="Username already exists"
             )
+
+        logger.warning(
+            "Registration failed: email already exists: %s",
+            user.email
+        )
 
         raise HTTPException(
             status_code=400,
@@ -82,6 +102,11 @@ async def register_user(
 
     await db.refresh(db_user)
 
+    logger.info(
+        "User registered successfully: %s",
+        db_user.username
+    )
+
     return db_user
 
 @app.post("/login")
@@ -89,6 +114,10 @@ async def login_user(
     user: UserLogin,
     db: AsyncSession = Depends(get_db)
 ):
+    logger.info(
+        "Login attempt for username: %s",
+        user.username
+    )
     result = await db.execute(   #Find the user
         select(database_models.User).where(
             database_models.User.username == user.username
@@ -98,15 +127,22 @@ async def login_user(
     db_user = result.scalar_one_or_none()
 
     if db_user is None: #If user doesn't exist
+        logger.warning(
+            "Login failed: user not found: %s",
+            user.username)
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid username or password"
-        )
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Invalid username or password"
+    )
 
     if not verify_password(
         user.password,
         db_user.password_hash
     ):
+        logger.warning(
+        "Login failed: incorrect password for username: %s",
+        user.username
+    )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid username or password"
@@ -116,6 +152,10 @@ async def login_user(
         data={
             "sub": str(db_user.id)
         }
+    )
+    logger.info(
+    "Login successful for username: %s",
+    db_user.username
     )
 
     return {
@@ -156,11 +196,18 @@ async def startup():
 
 @app.get("/products", response_model=list[ProductResponse])
 async def get_all_products(
-    db: AsyncSession = Depends(get_db)
+    page: int = Query(1, ge=1, description="Page number, must be greater than or equal to 1"),
+    limit: int = Query(10, ge=1, le=100, description="Number of products per page"),
+    db: AsyncSession = Depends(get_db),
+    credentials = Depends(security)
 ):
+    offset = (page - 1) * limit
 
     result = await db.execute(
         select(database_models.Product)
+        .order_by(database_models.Product.id)
+        .offset(offset)
+        .limit(limit)
     )
 
     db_products = result.scalars().all()
@@ -170,7 +217,8 @@ async def get_all_products(
 @app.get("/products/{product_id}", response_model=ProductResponse)
 async def get_product_by_id(
     product_id: int,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    credentials = Depends(security)
 ):
 
     result = await db.execute(
@@ -192,7 +240,8 @@ async def get_product_by_id(
 @app.post("/products", status_code=status.HTTP_201_CREATED, response_model=ProductResponse)
 async def add_product(
     product: ProductCreate,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    credentials = Depends(security)
 ):
 
     db_product = database_models.Product(
@@ -211,7 +260,8 @@ async def add_product(
 async def update_product(
     id: int,
     updated_product: ProductUpdate,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    credentials = Depends(security)
 ):
 
     result = await db.execute(
@@ -241,7 +291,8 @@ async def update_product(
 @app.delete("/products/{id}")
 async def delete_product(
     id: int,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    credentials = Depends(security)
 ):
 
     result = await db.execute(
@@ -265,7 +316,8 @@ async def delete_product(
     return {"message": "Product deleted successfully"}
 
 @app.patch("/products/{id}", response_model=ProductResponse)
-async def patch_product(id: int, updated_product: ProductUpdate, db: AsyncSession = Depends(get_db)):
+async def patch_product(id: int, updated_product: ProductUpdate, db: AsyncSession = Depends(get_db),
+    credentials = Depends(security)):
 
     result = await db.execute(
         select(database_models.Product).where(
