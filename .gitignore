@@ -1,6 +1,5 @@
 # Python cache
 __pycache__/
-.env
 *.py[cod]
 
 # Virtual environment

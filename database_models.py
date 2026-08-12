@@ -1,20 +1,70 @@
-from sqlalchemy import Column
-from sqlalchemy import String
-from sqlalchemy import Float
-from sqlalchemy import Integer
-from sqlalchemy.ext.declarative import declarative_base
-Base = declarative_base()
-class Product(Base):    # Define the Product table
-    __tablename__ = "product"
-    id= Column(Integer, primary_key=True, index=True)
-    name= Column(String)
-    description= Column(String)
-    price= Column(Float)
-    quantity= Column(Integer) 
+from datetime import datetime
+from sqlalchemy import String, Float, Integer, DateTime, func
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
-class User(Base):    # Define the User table
+
+class Base(DeclarativeBase):
+    pass
+
+
+class Product(Base):
+    __tablename__ = "product"
+
+    id: Mapped[int] = mapped_column(
+        Integer,
+        primary_key=True,
+        index=True
+    )
+
+    name: Mapped[str] = mapped_column(
+        String(200)
+    )
+
+    description: Mapped[str] = mapped_column(
+        String(500)
+    )
+
+    price: Mapped[float] = mapped_column(
+        Float
+    )
+
+    quantity: Mapped[int] = mapped_column(
+        Integer
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now()
+    )
+
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now()
+    )
+
+
+class User(Base):
     __tablename__ = "users"
-    id= Column(Integer, primary_key=True, index=True)
-    username= Column(String, unique=True, index=True)
-    email= Column(String, unique=True, index=True)
-    password_hash= Column(String)
+
+    id: Mapped[int] = mapped_column(
+        Integer,
+        primary_key=True,
+        index=True
+    )
+
+    username: Mapped[str] = mapped_column(
+        String(128),
+        unique=True,
+        index=True
+    )
+
+    email: Mapped[str] = mapped_column(
+        String(320),
+        unique=True,
+        index=True
+    )
+
+    password_hash: Mapped[str] = mapped_column(
+        String(255)
+    )

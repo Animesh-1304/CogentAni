@@ -2,7 +2,7 @@ import os
 
 from datetime import datetime, timedelta, timezone
 
-from jose import jwt
+from jose import jwt, JWTError
 from dotenv import load_dotenv
 
 
@@ -44,15 +44,12 @@ def verify_access_token(token: str):
             algorithms=[ALGORITHM]
         )
 
+        subject = payload.get("sub")
+
+        if subject is None:
+            return None
+
         return payload
 
-    except Exception:
+    except JWTError:
         return None
-
-if __name__ == "__main__":
-    token = create_access_token({
-        "sub": "1"
-    })
-
-    print(token)
-    print(verify_access_token(token))

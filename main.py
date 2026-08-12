@@ -2,9 +2,9 @@ from fastapi import FastAPI, Depends, HTTPException, status, Query
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from logging_config import logger
-from bearer_auth import BearerAuthMiddleware
-from fastapi.security import HTTPBearer
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from models import (
     ProductCreate,
     ProductUpdate,
@@ -14,14 +14,14 @@ from models import (
     UserResponse
 )
 from auth import hash_password, verify_password
-from jwt_auth import create_access_token
+from jwt_auth import create_access_token, verify_access_token
 from database import session, engine
 import database_models
 
 app=FastAPI()
 security = HTTPBearer()
 
-app.add_middleware(BearerAuthMiddleware)
+
 
 app.add_middleware(
     CORSMiddleware,
@@ -46,6 +46,44 @@ products=[
 async def get_db():
     async with session() as db:
         yield db
+
+async def get_current_user(
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    db: AsyncSession = Depends(get_db)
+):
+    token = credentials.credentials
+
+    payload = verify_access_token(token)
+
+    if payload is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired token"
+        )
+
+    user_id = payload.get("sub")
+
+    if user_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token"
+        )
+
+    result = await db.execute(
+        select(database_models.User).where(
+            database_models.User.id == int(user_id)
+        )
+    )
+
+    current_user = result.scalar_one_or_none()
+
+    if current_user is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User not found"
+        )
+
+    return current_user
 
 @app.post("/register", response_model=UserResponse)
 async def register_user(
@@ -98,7 +136,21 @@ async def register_user(
 
     db.add(db_user)
 
-    await db.commit()
+    try:
+        await db.commit()
+
+    except IntegrityError:
+        await db.rollback()
+
+        logger.warning(
+            "Registration failed due to duplicate username or email: %s",
+            user.username
+        )
+
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Username or email already exists"
+        )
 
     await db.refresh(db_user)
 
@@ -187,11 +239,6 @@ async def init_db():
 @app.on_event("startup")
 async def startup():
 
-    async with engine.begin() as conn:
-        await conn.run_sync(
-            database_models.Base.metadata.create_all
-        )
-
     await init_db()
 
 @app.get("/products", response_model=list[ProductResponse])
@@ -199,7 +246,7 @@ async def get_all_products(
     page: int = Query(1, ge=1, description="Page number, must be greater than or equal to 1"),
     limit: int = Query(10, ge=1, le=100, description="Number of products per page"),
     db: AsyncSession = Depends(get_db),
-    credentials = Depends(security)
+    current_user = Depends(get_current_user)
 ):
     offset = (page - 1) * limit
 
@@ -218,7 +265,7 @@ async def get_all_products(
 async def get_product_by_id(
     product_id: int,
     db: AsyncSession = Depends(get_db),
-    credentials = Depends(security)
+    current_user = Depends(get_current_user)
 ):
 
     result = await db.execute(
@@ -241,7 +288,7 @@ async def get_product_by_id(
 async def add_product(
     product: ProductCreate,
     db: AsyncSession = Depends(get_db),
-    credentials = Depends(security)
+    current_user = Depends(get_current_user)
 ):
 
     db_product = database_models.Product(
@@ -261,7 +308,7 @@ async def update_product(
     id: int,
     updated_product: ProductUpdate,
     db: AsyncSession = Depends(get_db),
-    credentials = Depends(security)
+    current_user = Depends(get_current_user)
 ):
 
     result = await db.execute(
@@ -292,9 +339,8 @@ async def update_product(
 async def delete_product(
     id: int,
     db: AsyncSession = Depends(get_db),
-    credentials = Depends(security)
+    current_user = Depends(get_current_user)
 ):
-
     result = await db.execute(
         select(database_models.Product).where(
             database_models.Product.id == id
@@ -316,8 +362,12 @@ async def delete_product(
     return {"message": "Product deleted successfully"}
 
 @app.patch("/products/{id}", response_model=ProductResponse)
-async def patch_product(id: int, updated_product: ProductUpdate, db: AsyncSession = Depends(get_db),
-    credentials = Depends(security)):
+async def patch_product(
+    id: int, 
+    updated_product: ProductUpdate, 
+    db: AsyncSession = Depends(get_db),
+    current_user = Depends(get_current_user)
+):
 
     result = await db.execute(
         select(database_models.Product).where(
