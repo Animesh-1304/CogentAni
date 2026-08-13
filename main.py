@@ -1,5 +1,6 @@
 from fastapi import FastAPI, Depends, HTTPException, status, Query
 from fastapi.middleware.cors import CORSMiddleware
+import os
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -23,9 +24,14 @@ security = HTTPBearer()
 
 
 
+allowed_origins = os.getenv(
+    "ALLOWED_ORIGINS",
+    "http://localhost:8000,http://127.0.0.1:8000"
+).split(",")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[],
+    allow_origins=allowed_origins,
     allow_credentials=False,
     allow_headers=["*"],
     allow_methods=["*"],
@@ -239,6 +245,11 @@ async def init_db():
 @app.on_event("startup")
 async def startup():
 
+    async with engine.begin() as conn:
+        await conn.run_sync(
+            database_models.Base.metadata.create_all
+        )
+
     await init_db()
 
 @app.get("/products", response_model=list[ProductResponse])
@@ -297,7 +308,20 @@ async def add_product(
 
     db.add(db_product)
 
-    await db.commit()
+    try:
+        await db.commit()
+
+    except IntegrityError:
+        await db.rollback()
+
+        logger.error(
+            "Database error while creating product"
+        )
+
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Could not create product"
+        )
 
     await db.refresh(db_product)
 
@@ -329,7 +353,21 @@ async def update_product(
     db_product.price = updated_product.price
     db_product.quantity = updated_product.quantity
 
-    await db.commit()
+    try:
+        await db.commit()
+
+    except IntegrityError:
+        await db.rollback()
+
+        logger.error(
+            "Database error while updating product: %s",
+            id
+        )
+
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Could not update product"
+        )
 
     await db.refresh(db_product)
 
@@ -355,9 +393,23 @@ async def delete_product(
             detail="Product not found"
         )
 
-    await db.delete(db_product)
+    db.delete(db_product)
 
-    await db.commit()
+    try:
+        await db.commit()
+
+    except IntegrityError:
+        await db.rollback()
+
+        logger.error(
+            "Database error while deleting product: %s",
+            id
+        )
+
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Could not delete product"
+        )
 
     return {"message": "Product deleted successfully"}
 
@@ -386,7 +438,23 @@ async def patch_product(
     update_data = updated_product.model_dump(exclude_unset=True)
     for field, value in update_data.items():
         setattr(db_product, field, value)
-    await db.commit()
+
+    try:
+        await db.commit()
+
+    except IntegrityError:
+        await db.rollback()
+
+        logger.error(
+            "Database error while patching product: %s",
+            id
+        )
+
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Could not update product"
+        )
+
     await db.refresh(db_product)
 
     return db_product

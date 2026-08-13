@@ -1,0 +1,10 @@
+myenv/
+__pycache__/
+*.py[cod]
+
+.env
+.git/
+.gitignore
+
+.vscode/
+.DS_Store
