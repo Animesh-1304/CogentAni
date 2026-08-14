@@ -4,6 +4,8 @@ import os
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 from logging_config import logger
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from models import (
@@ -22,6 +24,52 @@ import database_models
 app=FastAPI()
 security = HTTPBearer()
 
+@app.exception_handler(IntegrityError)
+async def integrity_error_handler(request, exc):
+    logger.error(
+        "Database integrity error on %s %s",
+        request.method,
+        request.url.path
+    )
+
+    return JSONResponse(
+        status_code=status.HTTP_409_CONFLICT,
+        content={
+            "detail": "Database constraint violation"
+        }
+    )
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_error_handler(request, exc):
+    logger.warning(
+        "Request validation failed on %s %s",
+        request.method,
+        request.url.path
+    )
+
+    return JSONResponse(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        content={
+            "detail": "Invalid request data"
+        }
+    )
+
+
+@app.exception_handler(Exception)
+async def general_exception_handler(request, exc):
+    logger.exception(
+        "Unhandled exception on %s %s",
+        request.method,
+        request.url.path
+    )
+
+    return JSONResponse(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        content={
+            "detail": "Internal server error"
+        }
+    )
 
 
 allowed_origins = os.getenv(
@@ -43,12 +91,7 @@ app.add_middleware(
 async def greet():
     return "Hello, welcome to the program!"
 
-products=[
-    ProductCreate(name="phone", description="A smartphone with 128GB storage", price=699.99, quantity=50),
-    ProductCreate(name="laptop", description="A laptop with 16GB RAM and 512GB SSD", price=1299.99, quantity=30),
-    ProductCreate(name="headphones", description="Wireless headphones with noise cancellation", price=199.99, quantity=100),
-    ProductCreate(name="smartwatch", description="A smartwatch with heart rate monitoring", price=249.99, quantity=75)
-]
+
 async def get_db():
     async with session() as db:
         yield db
@@ -221,36 +264,6 @@ async def login_user(
         "token_type": "bearer"
     }
 
-async def init_db():
-
-    async with session() as db:
-
-        result = await db.execute(
-            select(database_models.Product)
-        )
-
-        count = len(result.scalars().all())
-
-        if count == 0:
-
-            for product in products:
-                db.add(
-                    database_models.Product(
-                        **product.model_dump()
-                    )
-                )
-
-            await db.commit()
-
-@app.on_event("startup")
-async def startup():
-
-    async with engine.begin() as conn:
-        await conn.run_sync(
-            database_models.Base.metadata.create_all
-        )
-
-    await init_db()
 
 @app.get("/products", response_model=list[ProductResponse])
 async def get_all_products(

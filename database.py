@@ -13,6 +13,7 @@ load_dotenv()
 
 
 DATABASE_URL = os.getenv("DATABASE_URL")
+DEBUG = os.getenv("DEBUG", "false").lower() == "true"
 
 if not DATABASE_URL:
     raise RuntimeError("DATABASE_URL is not configured")
@@ -20,7 +21,7 @@ if not DATABASE_URL:
 
 engine = create_async_engine(
     DATABASE_URL,
-    echo=True
+    echo=DEBUG
 )
 
 
