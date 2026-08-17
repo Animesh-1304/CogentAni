@@ -1,6 +1,9 @@
 from fastapi import FastAPI, Depends, HTTPException, status, Query
+from contextlib import asynccontextmanager
 from fastapi.middleware.cors import CORSMiddleware
 import os
+import json
+from redis_client import redis_client, clear_product_cache
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -21,7 +24,23 @@ from jwt_auth import create_access_token, verify_access_token
 from database import session, engine
 import database_models
 
-app=FastAPI()
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+
+    logger.info("Connecting to Redis...")
+
+    await redis_client.ping()
+
+    logger.info("Redis connection successful")
+
+    yield
+
+    logger.info("Closing Redis connection...")
+
+    await redis_client.aclose()
+
+    logger.info("Redis connection closed")
+app=FastAPI(lifespan=lifespan)
 security = HTTPBearer()
 
 @app.exception_handler(IntegrityError)
@@ -274,6 +293,13 @@ async def get_all_products(
 ):
     offset = (page - 1) * limit
 
+    cache_key = f"products:page:{page}:limit:{limit}"
+
+    cached_products = await redis_client.get(cache_key)
+
+    if cached_products:
+        return json.loads(cached_products)
+
     result = await db.execute(
         select(database_models.Product)
         .order_by(database_models.Product.id)
@@ -282,6 +308,17 @@ async def get_all_products(
     )
 
     db_products = result.scalars().all()
+
+    products_data = [
+        ProductResponse.model_validate(product).model_dump(mode="json")
+        for product in db_products
+    ]
+
+    await redis_client.set(
+        cache_key,
+        json.dumps(products_data),
+        ex=60
+    )
 
     return db_products
 
@@ -337,6 +374,7 @@ async def add_product(
         )
 
     await db.refresh(db_product)
+    await clear_product_cache()
 
     return db_product
 
@@ -383,6 +421,7 @@ async def update_product(
         )
 
     await db.refresh(db_product)
+    await clear_product_cache()
 
     return db_product
 
@@ -423,6 +462,7 @@ async def delete_product(
             status_code=status.HTTP_409_CONFLICT,
             detail="Could not delete product"
         )
+    await clear_product_cache()
 
     return {"message": "Product deleted successfully"}
 
@@ -469,6 +509,39 @@ async def patch_product(
         )
 
     await db.refresh(db_product)
+    await clear_product_cache()
 
     return db_product
-          
+
+@app.get("/redis-test")
+async def redis_test():
+    await redis_client.set("message", "Hello from Redis")
+
+    value = await redis_client.get("message")
+
+    return {
+        "message": value
+    }
+@app.get("/redis-cache-test")
+async def redis_cache_test():
+
+    cached_value = await redis_client.get("cache_test")
+
+    if cached_value:
+        return {
+            "source": "redis",
+            "message": cached_value
+        }
+
+    message = "This came from the source"
+
+    await redis_client.set(
+        "cache_test",
+        message,
+        ex=60
+    )
+
+    return {
+        "source": "source",
+        "message": message
+    }
