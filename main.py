@@ -1,7 +1,10 @@
-from fastapi import FastAPI, Depends, HTTPException, status, Query
+from fastapi import FastAPI, Depends, HTTPException, Request, status, Query
 from contextlib import asynccontextmanager
 from fastapi.middleware.cors import CORSMiddleware
 import os
+from arq.connections import ArqRedis
+from arq import create_pool
+from arq.connections import RedisSettings
 import json
 from redis_client import redis_client, clear_product_cache
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -33,13 +36,31 @@ async def lifespan(app: FastAPI):
 
     logger.info("Redis connection successful")
 
+    app.state.arq_pool = await create_pool(
+        RedisSettings(
+            host="redis",
+            port=6379
+        )
+    )
+
+    logger.info("ARQ pool created")
+
     yield
+
+    logger.info("Closing ARQ pool...")
+
+    await app.state.arq_pool.close()
+
+    logger.info("ARQ pool closed")
 
     logger.info("Closing Redis connection...")
 
     await redis_client.aclose()
 
     logger.info("Redis connection closed")
+def get_arq_pool(request: Request)-> ArqRedis:
+    return request.app.state.arq_pool
+
 app=FastAPI(lifespan=lifespan)
 security = HTTPBearer()
 
@@ -544,4 +565,19 @@ async def redis_cache_test():
     return {
         "source": "source",
         "message": message
+    }
+
+@app.post("/hello-job")
+async def create_hello_job(
+    name: str,
+    pool: ArqRedis = Depends(get_arq_pool)
+):
+    job = await pool.enqueue_job(
+        "say_hello",
+        name
+    )
+
+    return {
+        "message": "Job queued successfully",
+        "job_id": job.job_id
     }
