@@ -2,6 +2,10 @@ from fastapi import FastAPI, Depends, HTTPException, Request, status, Query
 from contextlib import asynccontextmanager
 from fastapi.middleware.cors import CORSMiddleware
 import os
+import uuid
+from models import EventResponse
+from arq.connections import ArqRedis
+from arq.jobs import Job,JobStatus
 from arq.connections import ArqRedis
 from arq import create_pool
 from arq.connections import RedisSettings
@@ -581,3 +585,92 @@ async def create_hello_job(
         "message": "Job queued successfully",
         "job_id": job.job_id
     }
+
+@app.get("/hello-job/{job_id}")
+async def get_hello_job(
+    job_id: str,
+    pool: ArqRedis = Depends(get_arq_pool)
+):
+    job = Job(job_id, pool)
+
+    status = await job.status()
+
+    result = None
+
+    if status == JobStatus.complete:
+        result = await job.result()
+
+    return {
+        "job_id": job_id,
+        "status": status,
+        "result": result
+    }
+@app.post("/failing-job")
+async def create_failing_job(
+    pool: ArqRedis = Depends(get_arq_pool)
+):
+    job = await pool.enqueue_job(
+        "failing_job"
+    )
+
+    return {
+        "message": "Failing job queued",
+        "job_id": job.job_id
+    }
+
+@app.post("/products/{product_id}/process")
+async def process_product(
+    product_id: int,
+    pool: ArqRedis = Depends(get_arq_pool)
+):
+    task_id = str(uuid.uuid4())
+
+    await redis_client.set(
+        f"product_task:{task_id}",
+        "pending"
+    )
+
+    await pool.enqueue_job(
+        "process_product",
+        task_id,
+        product_id
+    )
+
+    return {
+        "task_id": task_id,
+        "product_id": product_id,
+        "status": "pending"
+    }
+
+@app.get("/products/{product_id}/process-status/{task_id}")
+async def get_product_process_status(
+    product_id: int,
+    task_id: str
+):
+    status = await redis_client.get(
+        f"product_task:{task_id}"
+    )
+
+    if status is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Task not found"
+        )
+
+    return {
+        "task_id": task_id,
+        "product_id": product_id,
+        "status": status
+    }
+
+@app.get("/events", response_model=list[EventResponse])
+async def get_events(
+    db: AsyncSession = Depends(get_db)
+):
+    result = await db.execute(
+        select(database_models.Event)
+    )
+
+    events = result.scalars().all()
+
+    return events

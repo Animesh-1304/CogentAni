@@ -9,3 +9,4 @@ argon2-cffi==25.1.0
 email-validator==2.3.0
 redis==5.3.1
 arq==0.28.0
+aio-pika==10.0.1

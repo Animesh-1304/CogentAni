@@ -1,5 +1,5 @@
 from datetime import datetime
-from sqlalchemy import String, Float, Integer, DateTime, func
+from sqlalchemy import Column, String, Float, Integer, DateTime, func
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -68,3 +68,10 @@ class User(Base):
     password_hash: Mapped[str] = mapped_column(
         String(255)
     )
+
+class Event(Base):
+    __tablename__ = "events"
+
+    id = Column(Integer, primary_key=True, index=True)
+    event = Column(String, nullable=False)
+    event_id = Column(String, nullable=False)

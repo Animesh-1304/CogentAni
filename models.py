@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field, EmailStr
+from pydantic import BaseModel, ConfigDict, Field, EmailStr
 
 
 class ProductCreate(BaseModel):
@@ -124,3 +124,10 @@ class UserLogin(BaseModel):
         min_length=8,
         max_length=128,
     )
+
+class EventResponse(BaseModel):
+    id: int
+    event: str
+    event_id: str
+
+    model_config = ConfigDict(from_attributes=True)
