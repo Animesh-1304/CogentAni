@@ -3,6 +3,9 @@ from contextlib import asynccontextmanager
 from fastapi.middleware.cors import CORSMiddleware
 import os
 import uuid
+
+from httpcore import request
+from models import ScrapeRequest
 from models import EventResponse
 from arq.connections import ArqRedis
 from arq.jobs import Job,JobStatus
@@ -12,7 +15,7 @@ from arq.connections import RedisSettings
 import json
 from redis_client import redis_client, clear_product_cache
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import pool, select
 from sqlalchemy.exc import IntegrityError
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
@@ -674,3 +677,50 @@ async def get_events(
     events = result.scalars().all()
 
     return events
+
+@app.post("/scrape")
+async def start_scrape(
+    request: ScrapeRequest,
+    pool: ArqRedis = Depends(get_arq_pool)):
+    job = await pool.enqueue_job(
+        "scrape_job",
+        request.url,
+        request.max_pages
+    )
+
+    return {
+        "job_id": job.job_id
+    }
+
+@app.get("/scrape/{job_id}")
+async def get_scrape_status(
+    job_id: str,
+    db: AsyncSession = Depends(get_db)
+):
+    progress_key = f"scrape:{job_id}"
+
+    status_value = await redis_client.hget(
+        progress_key,
+        "status"
+    )
+
+    progress_value = await redis_client.hget(
+        progress_key,
+        "progress"
+    )
+
+    result = await db.execute(
+        select(database_models.ScrapeResult)
+        .where(
+            database_models.ScrapeResult.job_id == job_id
+        )
+    )
+
+    results = result.scalars().all()
+
+    return {
+        "job_id": job_id,
+        "status": status_value,
+        "progress": int(progress_value) if progress_value else 0,
+        "results": results
+    }

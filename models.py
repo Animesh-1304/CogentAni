@@ -131,3 +131,7 @@ class EventResponse(BaseModel):
     event_id: str
 
     model_config = ConfigDict(from_attributes=True)
+
+class ScrapeRequest(BaseModel):
+    url: str
+    max_pages: int = 3

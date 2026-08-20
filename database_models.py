@@ -1,5 +1,5 @@
 from datetime import datetime
-from sqlalchemy import Column, String, Float, Integer, DateTime, func
+from sqlalchemy import Column, String, Float, Integer, DateTime, Text, func
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -75,3 +75,17 @@ class Event(Base):
     id = Column(Integer, primary_key=True, index=True)
     event = Column(String, nullable=False)
     event_id = Column(String, nullable=False)
+
+class ScrapeResult(Base):
+    __tablename__ = "scrape_results"
+
+    id = Column(Integer, primary_key=True, index=True)
+    job_id = Column(String, nullable=False, index=True)
+    url = Column(String, nullable=False)
+    title = Column(String, nullable=True)
+    text = Column(Text, nullable=True)
+    created_at = Column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False
+    )
